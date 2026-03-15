@@ -8,14 +8,26 @@ from app.routers import auth, checkins, groups, leaderboard, limits, requests, v
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    from bot.main import create_application
+    import logging
 
-    application = await create_application()
-    app.state.application = application
+    logger = logging.getLogger(__name__)
+
+    try:
+        from bot.main import create_application
+
+        application = await create_application()
+        app.state.application = application
+    except Exception as exc:
+        logger.error("Bot initialization failed: %s — API will start without bot", exc)
+        app.state.application = None
 
     yield
 
-    await application.shutdown()
+    if getattr(app.state, "application", None) is not None:
+        try:
+            await app.state.application.shutdown()
+        except Exception:
+            pass
 
 
 app = FastAPI(title="ScreenGate API", lifespan=lifespan)

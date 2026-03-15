@@ -37,6 +37,8 @@ async def create_application() -> Application:
     application: Application = (
         ApplicationBuilder()
         .token(settings.TELEGRAM_BOT_TOKEN)
+        .connect_timeout(30)
+        .read_timeout(30)
         .build()
     )
 
@@ -101,12 +103,31 @@ async def create_application() -> Application:
     # ------------------------------------------------------------------
     # Initialise and set webhook
     # ------------------------------------------------------------------
-    await application.initialize()
+    import asyncio
 
-    try:
-        await application.bot.set_webhook(settings.WEBHOOK_URL)
-        logger.info("create_application: webhook set to %s", settings.WEBHOOK_URL)
-    except Exception as exc:
-        logger.error("create_application: failed to set webhook: %s", exc)
+    for attempt in range(1, 4):
+        try:
+            await application.initialize()
+            logger.info("create_application: bot initialised (attempt %d)", attempt)
+            break
+        except Exception as exc:
+            logger.warning(
+                "create_application: initialize attempt %d failed: %s", attempt, exc
+            )
+            if attempt < 3:
+                await asyncio.sleep(5 * attempt)
+            else:
+                logger.error(
+                    "create_application: all init attempts failed — "
+                    "bot will not be available until restart"
+                )
+                return application
+
+    if settings.WEBHOOK_URL:
+        try:
+            await application.bot.set_webhook(settings.WEBHOOK_URL)
+            logger.info("create_application: webhook set to %s", settings.WEBHOOK_URL)
+        except Exception as exc:
+            logger.error("create_application: failed to set webhook: %s", exc)
 
     return application

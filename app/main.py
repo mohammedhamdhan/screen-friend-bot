@@ -12,14 +12,11 @@ async def lifespan(app: FastAPI):
 
     logger = logging.getLogger(__name__)
 
-    try:
-        from bot.main import create_application
+    from bot.main import create_application
 
-        application = await create_application()
-        app.state.application = application
-    except Exception as exc:
-        logger.error("Bot initialization failed: %s — API will start without bot", exc)
-        app.state.application = None
+    application = create_application()
+    app.state.application = application
+    logger.info("Application startup complete")
 
     yield
 

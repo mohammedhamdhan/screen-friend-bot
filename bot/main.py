@@ -1,9 +1,9 @@
 """
 Bot application factory.
 
-Creates and configures the PTB Application, registers all handlers,
-and sets the Telegram webhook. Returns the Application instance for
-use in the FastAPI lifespan.
+Creates and configures the PTB Application with all handlers registered.
+Initialization (which requires network) is deferred to the first webhook
+request — see app.routers.webhook for the lazy-init logic.
 """
 
 import logging
@@ -20,17 +20,16 @@ from app.config import get_settings
 logger = logging.getLogger(__name__)
 
 
-async def create_application() -> Application:
-    """Build, configure and initialise the PTB Application.
+def create_application() -> Application:
+    """Build and configure the PTB Application (no network calls).
 
-    - Registers all command and callback handlers.
-    - Sets the Telegram webhook.
-    - Calls application.initialize() (does NOT call start() — updates are
-      delivered via webhook, not polling).
+    Registers all command and callback handlers but does NOT call
+    application.initialize() or set the webhook — that is handled
+    lazily on the first incoming webhook request.
 
     Returns
     -------
-    The fully initialised Application instance.
+    The configured (but not yet initialised) Application instance.
     """
     settings = get_settings()
 
@@ -100,34 +99,20 @@ async def create_application() -> Application:
 
     application.add_handler(CallbackQueryHandler(callback_handler))
 
-    # ------------------------------------------------------------------
-    # Initialise and set webhook
-    # ------------------------------------------------------------------
-    import asyncio
+    logger.info("create_application: handlers registered (init deferred)")
+    return application
 
-    for attempt in range(1, 4):
-        try:
-            await application.initialize()
-            logger.info("create_application: bot initialised (attempt %d)", attempt)
-            break
-        except Exception as exc:
-            logger.warning(
-                "create_application: initialize attempt %d failed: %s", attempt, exc
-            )
-            if attempt < 3:
-                await asyncio.sleep(5 * attempt)
-            else:
-                logger.error(
-                    "create_application: all init attempts failed — "
-                    "bot will not be available until restart"
-                )
-                return application
+
+async def initialize_application(application: Application) -> None:
+    """Initialise the Application and set the webhook (requires network).
+
+    Called lazily from the webhook handler on the first incoming update.
+    """
+    settings = get_settings()
+
+    await application.initialize()
+    logger.info("initialize_application: bot initialised")
 
     if settings.WEBHOOK_URL:
-        try:
-            await application.bot.set_webhook(settings.WEBHOOK_URL)
-            logger.info("create_application: webhook set to %s", settings.WEBHOOK_URL)
-        except Exception as exc:
-            logger.error("create_application: failed to set webhook: %s", exc)
-
-    return application
+        await application.bot.set_webhook(settings.WEBHOOK_URL)
+        logger.info("initialize_application: webhook set to %s", settings.WEBHOOK_URL)

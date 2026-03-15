@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import auth, leaderboard, limits, requests, votes, webhook
+from app.routers import auth, checkins, groups, leaderboard, limits, requests, votes, webhook
 
 
 @asynccontextmanager
@@ -29,6 +29,8 @@ app.add_middleware(
 )
 
 app.include_router(auth.router, prefix="/api/v1")
+app.include_router(groups.router, prefix="/api/v1")
+app.include_router(checkins.router, prefix="/api/v1")
 app.include_router(limits.router, prefix="/api/v1")
 app.include_router(requests.router, prefix="/api/v1")
 app.include_router(votes.router, prefix="/api/v1")

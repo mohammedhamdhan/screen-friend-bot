@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,4 +30,13 @@ async def register(payload: UserRegisterRequest, db: AsyncSession = Depends(get_
 
     await db.commit()
     await db.refresh(user)
+    return user
+
+
+@router.get("/profile/{telegram_id}", response_model=UserResponse)
+async def get_profile(telegram_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(User).where(User.telegram_id == telegram_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     return user

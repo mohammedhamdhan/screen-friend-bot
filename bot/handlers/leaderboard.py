@@ -3,6 +3,7 @@ Leaderboard handler: /leaderboard (group chats only)
 """
 
 import logging
+import os
 
 import httpx
 from telegram import Update
@@ -10,7 +11,7 @@ from telegram.ext import ContextTypes
 
 logger = logging.getLogger(__name__)
 
-_BASE_URL = "http://localhost:8000"
+_BASE_URL = f"http://localhost:{os.environ.get('PORT', '8000')}"
 
 
 async def leaderboard_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

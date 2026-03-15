@@ -2,8 +2,8 @@
 Bot application factory.
 
 Creates and configures the PTB Application with all handlers registered.
-Initialization (which requires network) is deferred to the first webhook
-request — see app.routers.webhook for the lazy-init logic.
+Initialization (which requires network) runs as a background task after
+server startup — see app.main._background_init.
 """
 
 import logging
@@ -106,7 +106,7 @@ def create_application() -> Application:
 async def initialize_application(application: Application) -> None:
     """Initialise the Application and set the webhook (requires network).
 
-    Called lazily from the webhook handler on the first incoming update.
+    Called from the background init task after server startup.
     """
     settings = get_settings()
 

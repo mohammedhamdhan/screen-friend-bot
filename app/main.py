@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import auth, limits
+from app.routers import auth, leaderboard, limits, requests, votes, webhook
 
 
 @asynccontextmanager
@@ -25,6 +25,10 @@ app.add_middleware(
 
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(limits.router, prefix="/api/v1")
+app.include_router(requests.router, prefix="/api/v1")
+app.include_router(votes.router, prefix="/api/v1")
+app.include_router(leaderboard.router, prefix="/api/v1")
+app.include_router(webhook.router, prefix="/api/v1")
 
 
 @app.get("/health")

@@ -33,3 +33,20 @@ async def telegram_webhook(request: Request):
 
     # Always return 200 to Telegram so it does not retry
     return Response(status_code=status.HTTP_200_OK)
+
+
+@router.get("/debug", status_code=status.HTTP_200_OK)
+async def webhook_debug(request: Request):
+    """Return current webhook info for debugging delivery issues."""
+    application = getattr(request.app.state, "application", None)
+    if application is None or not getattr(request.app.state, "bot_initialized", False):
+        return {"error": "bot not initialized"}
+    info = await application.bot.get_webhook_info()
+    return {
+        "url": info.url,
+        "pending_update_count": info.pending_update_count,
+        "last_error_date": str(info.last_error_date) if info.last_error_date else None,
+        "last_error_message": info.last_error_message,
+        "max_connections": info.max_connections,
+        "allowed_updates": info.allowed_updates,
+    }

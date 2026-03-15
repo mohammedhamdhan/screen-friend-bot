@@ -9,7 +9,7 @@ import uuid
 from datetime import date, timedelta
 from typing import Any
 
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Leaderboard, User
@@ -20,6 +20,10 @@ logger = logging.getLogger(__name__)
 _SCORE_SQL = "(clean_days * 10) - (requests_made * 3) - (requests_denied * 5)"
 
 _ALLOWED_FIELDS = {"requests_made", "requests_denied", "clean_days"}
+
+
+def _compute_score(row: "Leaderboard") -> int:
+    return (row.clean_days * 10) - (row.requests_made * 3) - (row.requests_denied * 5)
 
 
 def _current_week_start() -> date:
@@ -35,9 +39,6 @@ async def upsert_leaderboard(
     db: AsyncSession,
 ) -> None:
     """Increment a single counter field on the leaderboard row for the current week.
-
-    Uses INSERT ... ON CONFLICT DO UPDATE so the row is created if it does not
-    exist yet (with all counters at 0 + 1 for the target field).
 
     Parameters
     ----------
@@ -62,42 +63,36 @@ async def upsert_leaderboard(
 
     week_start = _current_week_start()
 
-    # Build raw SQL to handle ON CONFLICT atomically.
-    # We cast the UUIDs explicitly so PostgreSQL can match the column type.
-    stmt = text(
-        f"""
-        INSERT INTO leaderboard (user_id, group_id, week_start, requests_made, requests_denied, clean_days, score)
-        VALUES (:user_id, :group_id, :week_start,
-                :rm_init, :rd_init, :cd_init,
-                (:cd_init * 10) - (:rm_init * 3) - (:rd_init * 5))
-        ON CONFLICT (user_id, group_id, week_start)
-        DO UPDATE SET
-            {field} = leaderboard.{field} + 1,
-            score   = (leaderboard.clean_days + CASE WHEN '{field}' = 'clean_days' THEN 1 ELSE 0 END) * 10
-                    - (leaderboard.requests_made + CASE WHEN '{field}' = 'requests_made' THEN 1 ELSE 0 END) * 3
-                    - (leaderboard.requests_denied + CASE WHEN '{field}' = 'requests_denied' THEN 1 ELSE 0 END) * 5
-        """
+    # Try to find existing row
+    result = await db.execute(
+        select(Leaderboard).where(
+            Leaderboard.user_id == user_id,
+            Leaderboard.group_id == group_id,
+            Leaderboard.week_start == week_start,
+        )
     )
+    row = result.scalar_one_or_none()
 
-    # Initial insert values — the target field starts at 1, others at 0
-    init: dict[str, Any] = {
-        "requests_made": 0,
-        "requests_denied": 0,
-        "clean_days": 0,
-    }
-    init[field] = 1
-
-    await db.execute(
-        stmt,
-        {
-            "user_id": str(user_id),
-            "group_id": str(group_id),
+    if row is None:
+        # Create new row with the target field set to 1
+        kwargs = {
+            "user_id": user_id,
+            "group_id": group_id,
             "week_start": week_start,
-            "rm_init": init["requests_made"],
-            "rd_init": init["requests_denied"],
-            "cd_init": init["clean_days"],
-        },
-    )
+            "requests_made": 0,
+            "requests_denied": 0,
+            "clean_days": 0,
+        }
+        kwargs[field] = 1
+        row = Leaderboard(**kwargs)
+        row.score = _compute_score(row)
+        db.add(row)
+    else:
+        # Increment the target field
+        setattr(row, field, getattr(row, field) + 1)
+        row.score = _compute_score(row)
+
+    await db.flush()
 
     logger.debug(
         "upsert_leaderboard: user_id=%s group_id=%s week_start=%s field=%s",

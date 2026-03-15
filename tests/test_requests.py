@@ -240,6 +240,8 @@ async def test_create_request_expires_at_set(client, db_session):
     assert response.status_code == 201
     expires_str = response.json()["expires_at"]
     expires_at = datetime.fromisoformat(expires_str)
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
 
     # Should expire ~30 minutes from now (allow ±5 seconds for test execution time)
     expected_min = before + timedelta(minutes=29, seconds=55)

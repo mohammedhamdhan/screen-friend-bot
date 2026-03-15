@@ -10,6 +10,7 @@ router = APIRouter(prefix="/webhook", tags=["webhook"])
 @router.post("/telegram", status_code=status.HTTP_200_OK)
 async def telegram_webhook(request: Request):
     """Receive Telegram updates and pass them to the PTB Application."""
+    logger.info("telegram_webhook: received POST request")
     application = getattr(request.app.state, "application", None)
 
     if application is None:

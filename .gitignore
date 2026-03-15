@@ -80,3 +80,10 @@ celerybeat.pid
 *.pem
 *.key
 secrets/
+
+# Claude Code
+.claude/
+.claire/
+
+# Spec docs
+screengate_spec.docx

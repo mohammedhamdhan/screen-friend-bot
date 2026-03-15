@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -5,24 +6,33 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.routers import auth, checkins, groups, leaderboard, limits, requests, votes, webhook
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    import logging
 
-    logger = logging.getLogger(__name__)
+    try:
+        from bot.main import create_application
 
-    from bot.main import create_application
+        application = create_application()
+        app.state.application = application
+    except Exception as exc:
+        logger.error("Failed to build bot application: %s", exc)
+        app.state.application = None
 
-    application = create_application()
-    app.state.application = application
     logger.info("Application startup complete")
 
     yield
 
-    if getattr(app.state, "application", None) is not None:
+    application = getattr(app.state, "application", None)
+    if application is not None:
         try:
-            await app.state.application.shutdown()
+            await application.shutdown()
         except Exception:
             pass
 

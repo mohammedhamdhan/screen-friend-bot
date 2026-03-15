@@ -8,9 +8,14 @@ from app.routers import auth, leaderboard, limits, requests, votes, webhook
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Bot init will be added later
+    from bot.main import create_application
+
+    application = await create_application()
+    app.state.application = application
+
     yield
-    # Bot shutdown will be added later
+
+    await application.shutdown()
 
 
 app = FastAPI(title="ScreenGate API", lifespan=lifespan)

@@ -11,7 +11,7 @@ from telegram.ext import ContextTypes
 
 logger = logging.getLogger(__name__)
 
-_BASE_URL = f"http://localhost:{os.environ.get('PORT', '8000')}"
+_BASE_URL = f"http://127.0.0.1:{os.environ.get('PORT', '8000')}"
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

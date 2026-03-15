@@ -21,7 +21,7 @@ from bot.keyboards import duration_keyboard
 
 logger = logging.getLogger(__name__)
 
-_BASE_URL = f"http://localhost:{os.environ.get('PORT', '8000')}"
+_BASE_URL = f"http://127.0.0.1:{os.environ.get('PORT', '8000')}"
 
 # ConversationHandler states
 CHOOSING_DURATION, WAITING_FOR_PHOTO = range(2)

@@ -3,6 +3,7 @@ Admin handlers: /setup, /members, /kick — restricted to group admins.
 """
 
 import logging
+import os
 
 import httpx
 from telegram import Update
@@ -11,7 +12,7 @@ from telegram.ext import ContextTypes
 
 logger = logging.getLogger(__name__)
 
-_BASE_URL = "http://localhost:8000"
+_BASE_URL = f"http://127.0.0.1:{os.environ.get('PORT', '8000')}"
 
 _ADMIN_STATUSES = {
     ChatMemberStatus.ADMINISTRATOR,

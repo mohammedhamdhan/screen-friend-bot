@@ -114,7 +114,7 @@ async def initialize_application(application: Application) -> None:
     logger.info("initialize_application: bot initialised")
 
     if settings.WEBHOOK_URL:
-        await application.bot.set_webhook(settings.WEBHOOK_URL)
+        await application.bot.set_webhook(settings.WEBHOOK_URL, drop_pending_updates=True)
         logger.info("initialize_application: webhook set to %s", settings.WEBHOOK_URL)
 
         info = await application.bot.get_webhook_info()

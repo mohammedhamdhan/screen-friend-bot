@@ -16,7 +16,7 @@ class Settings(BaseSettings):
 
     # Telegram
     TELEGRAM_BOT_TOKEN: str
-    WEBHOOK_URL: str
+    WEBHOOK_URL: str = ""
 
     # Cloudflare R2
     R2_ACCOUNT_ID: str

@@ -13,6 +13,8 @@ from telegram.ext import (
     ApplicationBuilder,
     CallbackQueryHandler,
     CommandHandler,
+    MessageHandler,
+    filters,
 )
 
 from app.config import get_settings
@@ -92,7 +94,26 @@ def create_application() -> Application:
     application.add_handler(CommandHandler("members", members_command))
     application.add_handler(CommandHandler("kick", kick_command))
 
-    # Catch-all callback query handler (vote, checkin, react prefixes)
+    # Group photo handler for screenshot OCR check-in
+    # Must be AFTER ConversationHandler so /more photo flow isn't intercepted
+    from bot.handlers.screen_time import handle_dm_screenshot, handle_group_screenshot
+
+    application.add_handler(
+        MessageHandler(
+            filters.PHOTO & (filters.ChatType.GROUP | filters.ChatType.SUPERGROUP),
+            handle_group_screenshot,
+        )
+    )
+
+    # DM photo handler for personal /checkin screenshot flow
+    application.add_handler(
+        MessageHandler(
+            filters.PHOTO & filters.ChatType.PRIVATE,
+            handle_dm_screenshot,
+        )
+    )
+
+    # Catch-all callback query handler (vote, checkin, screencheckin, react prefixes)
     # Must be registered AFTER the ConversationHandler so that duration:
     # callbacks are consumed by the conversation first.
     from bot.handlers.callbacks import callback_handler

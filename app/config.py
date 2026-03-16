@@ -25,11 +25,15 @@ class Settings(BaseSettings):
     R2_BUCKET_NAME: str
     R2_PUBLIC_URL: str
 
+    # OpenAI (GPT-4o vision for screen time OCR)
+    OPENAI_API_KEY: str = ""
+
     # App behaviour
     REQUEST_TIMEOUT_MINUTES: int = 30
     REQUEST_COOLDOWN_MINUTES: int = 15
     CHECKIN_TIME_UTC: int = 13
     LEADERBOARD_DAY: int = 0
+    SCREENSHOT_COLLECTION_TIMEOUT_MINUTES: int = 60
 
 
 @lru_cache

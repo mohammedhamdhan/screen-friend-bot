@@ -29,6 +29,24 @@ def duration_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
+def screenshot_fallback_keyboard(user_id: int) -> InlineKeyboardMarkup:
+    """Inline keyboard for manual check-in when OCR fails or times out."""
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "✅ Stayed clean",
+                    callback_data=f"screencheckin:{user_id}:clean",
+                ),
+                InlineKeyboardButton(
+                    "😔 Slipped",
+                    callback_data=f"screencheckin:{user_id}:slipped",
+                ),
+            ]
+        ]
+    )
+
+
 def checkin_keyboard(user_id: int | None = None) -> InlineKeyboardMarkup:
     """Inline keyboard for daily check-in (clean / slipped)."""
     if user_id is not None:

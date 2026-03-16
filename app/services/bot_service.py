@@ -251,6 +251,120 @@ async def post_confession(
         )
 
 
+async def post_screenshot_request(
+    group_chat_id: int | str, mention_text: str
+) -> Optional[int]:
+    """Send a screenshot collection prompt to the group.
+
+    Returns the Telegram message_id of the sent message, or None on failure.
+    """
+    text = (
+        "📸 <b>Daily Screen Time Check-in</b>\n\n"
+        f"{mention_text}\n\n"
+        "Please send a screenshot of your screen time report. "
+        "I'll automatically check your usage against your limits!\n\n"
+        "⏳ You have 60 minutes to submit."
+    )
+
+    payload = {
+        "chat_id": group_chat_id,
+        "text": text,
+        "parse_mode": "HTML",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(f"{_base_url()}/sendMessage", json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+            message_id: int = data["result"]["message_id"]
+            logger.info(
+                "post_screenshot_request: sent to chat_id=%s, message_id=%s",
+                group_chat_id,
+                message_id,
+            )
+            return message_id
+    except Exception as exc:
+        logger.error(
+            "post_screenshot_request failed for chat_id=%s: %s", group_chat_id, exc
+        )
+        return None
+
+
+async def post_ocr_result(
+    group_chat_id: int | str,
+    username: str,
+    stayed_clean: bool,
+    app_details: str,
+) -> None:
+    """Post the OCR check-in result to the group."""
+    if stayed_clean:
+        text = f"✅ @{username} stayed clean! {app_details}"
+    else:
+        text = f"❌ @{username} slipped: {app_details}"
+
+    payload = {
+        "chat_id": group_chat_id,
+        "text": text,
+        "parse_mode": "HTML",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(f"{_base_url()}/sendMessage", json=payload)
+            resp.raise_for_status()
+            logger.info("post_ocr_result: sent for username=%s", username)
+    except Exception as exc:
+        logger.error("post_ocr_result failed for username=%s: %s", username, exc)
+
+
+async def post_manual_fallback(
+    group_chat_id: int | str,
+    user_telegram_id: int,
+    username: str,
+) -> None:
+    """Send manual check-in buttons for a user who didn't submit a screenshot."""
+    text = (
+        f"⏰ @{username}, time's up! "
+        "You didn't send a screenshot. Please check in manually:"
+    )
+
+    inline_keyboard = {
+        "inline_keyboard": [
+            [
+                {
+                    "text": "✅ Stayed clean",
+                    "callback_data": f"screencheckin:{user_telegram_id}:clean",
+                },
+                {
+                    "text": "😔 Slipped",
+                    "callback_data": f"screencheckin:{user_telegram_id}:slipped",
+                },
+            ]
+        ]
+    }
+
+    payload = {
+        "chat_id": group_chat_id,
+        "text": text,
+        "reply_markup": inline_keyboard,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(f"{_base_url()}/sendMessage", json=payload)
+            resp.raise_for_status()
+            logger.info(
+                "post_manual_fallback: sent for telegram_id=%s", user_telegram_id
+            )
+    except Exception as exc:
+        logger.error(
+            "post_manual_fallback failed for telegram_id=%s: %s",
+            user_telegram_id,
+            exc,
+        )
+
+
 async def post_leaderboard(group_chat_id: int | str, message: str) -> None:
     """Post a pre-formatted leaderboard message to the group.
 

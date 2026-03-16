@@ -2,6 +2,7 @@
 Social handlers: /checkin, /confess, /streak, /history
 """
 
+import json
 import logging
 import os
 
@@ -15,17 +16,45 @@ logger = logging.getLogger(__name__)
 
 _BASE_URL = f"http://127.0.0.1:{os.environ.get('PORT', '8000')}"
 
+_CHECKIN_TTL_SECONDS = 600  # 10 minutes to send a screenshot
+
+
+async def _get_redis():
+    """Get an async Redis client."""
+    import redis.asyncio as aioredis
+    from app.config import get_settings
+
+    settings = get_settings()
+    return aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+
 
 async def checkin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/checkin — prompt user to log their daily check-in."""
+    """/checkin — prompt user to send a screenshot for daily check-in."""
     user = update.effective_user
     if user is None:
         return
 
+    chat = update.effective_chat
+    if chat is None:
+        return
+
     name = user.first_name or user.username or "you"
+
+    # Store check-in state in Redis so the photo handler picks it up
+    r = await _get_redis()
+    try:
+        redis_key = f"screengate:checkin:{user.id}"
+        state = {
+            "chat_id": chat.id,
+            "retries": 0,
+        }
+        await r.setex(redis_key, _CHECKIN_TTL_SECONDS, json.dumps(state))
+    finally:
+        await r.aclose()
+
     await update.message.reply_text(
-        f"📅 Hey {name}, how did today go?",
-        reply_markup=checkin_keyboard(user_id=user.id),
+        f"📸 Hey {name}, please send a screenshot of your screen time report "
+        f"and I'll check it against your limits!",
     )
 
 

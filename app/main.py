@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import auth, checkins, groups, leaderboard, limits, requests, votes, webhook
+from app.routers import auth, checkins, groups, leaderboard, limits, requests, screen_time, votes, webhook
 
 logging.basicConfig(
     level=logging.INFO,
@@ -82,6 +82,7 @@ app.include_router(limits.router, prefix="/api/v1")
 app.include_router(requests.router, prefix="/api/v1")
 app.include_router(votes.router, prefix="/api/v1")
 app.include_router(leaderboard.router, prefix="/api/v1")
+app.include_router(screen_time.router, prefix="/api/v1")
 app.include_router(webhook.router, prefix="/api/v1")
 
 

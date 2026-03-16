@@ -3,6 +3,7 @@ Callback query handlers.
 
 Prefix routing:
   vote:{request_id}:{decision}              → POST /api/v1/votes
+  screencheckin:{user_id}:clean|slipped     → manual fallback for screenshot check-in
   checkin:clean                             → log clean day for calling user
   checkin:<user_id>:clean                   → log clean day for given user
   checkin:slipped                           → prompt for confession
@@ -33,6 +34,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     if data.startswith("vote:"):
         await _handle_vote(query, update, context)
+    elif data.startswith("screencheckin:"):
+        await _handle_screencheckin(query, update, context)
     elif data.startswith("checkin:"):
         await _handle_checkin(query, update, context)
     elif data.startswith("react:"):
@@ -142,8 +145,7 @@ async def _handle_checkin(query, update: Update, context: ContextTypes.DEFAULT_T
     if action == "clean":
         await _log_checkin(query, update, context, user_id=user.id, stayed_clean=True)
     elif action == "slipped":
-        await query.answer()
-        await _prompt_confession(update, context, user_id=user.id)
+        await _log_checkin(query, update, context, user_id=user.id, stayed_clean=False)
     else:
         await query.answer("Unknown action.", show_alert=True)
 
@@ -193,21 +195,88 @@ async def _log_checkin(
                 parse_mode="HTML",
             )
     else:
-        await query.answer("Logged.", show_alert=False)
-
-
-async def _prompt_confession(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-    user_id: int,
-) -> None:
-    """Prompt the user to send a confession via /confess."""
-    message = update.effective_message
-    if message:
-        await message.reply_text(
-            "😔 It happens. Use /confess <app> [note] to share with your group.",
-            parse_mode="HTML",
+        await query.answer(
+            "😔 Slipped day logged. Streak reset to 0. Tomorrow is a new day!",
+            show_alert=True,
         )
+        if query.message:
+            await query.message.reply_text(
+                f"😔 <b>{update.effective_user.first_name}</b> slipped today. "
+                f"Streak reset to 0. Use /confess <app> [note] to share with your group.",
+                parse_mode="HTML",
+            )
+
+
+# ---------------------------------------------------------------------------
+# Screen check-in (manual fallback for OCR)
+# ---------------------------------------------------------------------------
+
+async def _handle_screencheckin(query, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle screencheckin:{user_id}:clean|slipped — manual fallback for screenshot check-in."""
+    user = update.effective_user
+    if user is None:
+        await query.answer()
+        return
+
+    parts = (query.data or "").split(":")
+    if len(parts) != 3:
+        await query.answer("Invalid check-in data.", show_alert=True)
+        return
+
+    _, target_user_id_str, action = parts
+    try:
+        target_user_id = int(target_user_id_str)
+    except ValueError:
+        await query.answer("Invalid check-in data.", show_alert=True)
+        return
+
+    if target_user_id != user.id:
+        await query.answer("This check-in is not for you.", show_alert=True)
+        return
+
+    if action == "clean":
+        await _log_checkin(query, update, context, user_id=user.id, stayed_clean=True)
+        # Remove from Redis pending list
+        await _remove_from_collection(update.effective_chat, user.id)
+    elif action == "slipped":
+        await _log_checkin(query, update, context, user_id=user.id, stayed_clean=False)
+        await _remove_from_collection(update.effective_chat, user.id)
+    else:
+        await query.answer("Unknown action.", show_alert=True)
+
+
+async def _remove_from_collection(chat, user_id: int) -> None:
+    """Remove user from Redis screenshot collection pending list."""
+    if chat is None:
+        return
+    try:
+        import json
+        import redis.asyncio as aioredis
+        from app.config import get_settings
+
+        settings = get_settings()
+        r = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+        try:
+            redis_key = f"screengate:collection:{chat.id}"
+            raw = await r.get(redis_key)
+            if raw:
+                state = json.loads(raw)
+                pending = state.get("pending_users", [])
+                if user_id in pending:
+                    pending.remove(user_id)
+                    state["pending_users"] = pending
+                    if pending:
+                        ttl = await r.ttl(redis_key)
+                        if ttl > 0:
+                            await r.setex(redis_key, ttl, json.dumps(state))
+                        else:
+                            await r.set(redis_key, json.dumps(state))
+                    else:
+                        await r.delete(redis_key)
+        finally:
+            await r.aclose()
+    except Exception as exc:
+        logger.warning("_remove_from_collection: %s", exc)
 
 
 # ---------------------------------------------------------------------------

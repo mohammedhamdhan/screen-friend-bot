@@ -9,12 +9,14 @@ asyncio.run().
 """
 
 import asyncio
+import json
 import logging
 import uuid
 from datetime import date, timezone
 
 from sqlalchemy import select
 
+from app.config import get_settings
 from app.database import AsyncSessionLocal
 from app.models import Checkin, Group, Membership, Request, RequestStatus, User
 from app.services import bot_service, leaderboard_service
@@ -114,14 +116,18 @@ def expire_request(self, request_id: str) -> None:
 
 @celery_app.task(name="app.workers.tasks.send_daily_checkins")
 def send_daily_checkins() -> None:
-    """DM every user who has not submitted a check-in for today.
+    """Send screenshot collection prompts to each group for unchecked-in members.
 
-    The message includes inline buttons so the user can respond directly:
-      [Clean] — they stayed clean today
-      [Slipped] — they did not
+    For each group, posts a message asking pending users to send screen time
+    screenshots. Stores collection state in Redis and schedules a timeout task.
     """
     async def _inner():
+        import redis.asyncio as aioredis
+        from datetime import datetime, timezone as tz
+
+        settings = get_settings()
         today = date.today()
+        timeout_seconds = settings.SCREENSHOT_COLLECTION_TIMEOUT_MINUTES * 60
 
         async with AsyncSessionLocal() as db:
             # Users who already have a check-in today
@@ -130,65 +136,128 @@ def send_daily_checkins() -> None:
             )
             checked_in_ids = {row[0] for row in checked_in_result.all()}
 
-            # All users that belong to at least one group (active members)
-            all_members_result = await db.execute(
-                select(User).join(Membership, Membership.user_id == User.id).distinct()
-            )
-            all_users = all_members_result.scalars().all()
+            # Get all groups with their members
+            groups_result = await db.execute(select(Group))
+            groups = groups_result.scalars().all()
 
-            pending_users = [u for u in all_users if u.id not in checked_in_ids]
-
-            logger.info(
-                "send_daily_checkins: %d users need a check-in for %s",
-                len(pending_users),
-                today,
-            )
-
-            for user in pending_users:
-                text = (
-                    "Good day! Time for your daily check-in.\n\n"
-                    "Did you stay clean today?\n\n"
-                    'Tap <b>Clean</b> if you held it together, or '
-                    '<b>Slipped</b> if you did not.'
+            for group in groups:
+                # Get members of this group who haven't checked in
+                members_result = await db.execute(
+                    select(User)
+                    .join(Membership, Membership.user_id == User.id)
+                    .where(Membership.group_id == group.id)
                 )
-                # Send DM with inline keyboard
-                payload = {
-                    "chat_id": user.telegram_id,
-                    "text": text,
-                    "parse_mode": "HTML",
-                    "reply_markup": {
-                        "inline_keyboard": [
-                            [
-                                {
-                                    "text": "✅ Clean",
-                                    "callback_data": f"checkin:{user.id}:clean",
-                                },
-                                {
-                                    "text": "😔 Slipped",
-                                    "callback_data": f"checkin:{user.id}:slipped",
-                                },
-                            ]
-                        ]
-                    },
-                }
-                import httpx
-                from app.config import get_settings
-                token = get_settings().TELEGRAM_BOT_TOKEN
-                base_url = f"https://api.telegram.org/bot{token}"
-                try:
-                    async with httpx.AsyncClient(timeout=15.0) as client:
-                        resp = await client.post(f"{base_url}/sendMessage", json=payload)
-                        resp.raise_for_status()
-                        logger.info(
-                            "send_daily_checkins: sent reminder to telegram_id=%s",
-                            user.telegram_id,
-                        )
-                except Exception as exc:
-                    logger.error(
-                        "send_daily_checkins: failed for telegram_id=%s: %s",
-                        user.telegram_id,
-                        exc,
+                members = members_result.scalars().all()
+                pending = [u for u in members if u.id not in checked_in_ids]
+
+                if not pending:
+                    logger.info(
+                        "send_daily_checkins: all members checked in for group %s",
+                        group.telegram_chat_id,
                     )
+                    continue
+
+                # Build mention list
+                mention_parts = []
+                pending_telegram_ids = []
+                for u in pending:
+                    if u.username:
+                        mention_parts.append(f"@{u.username}")
+                    else:
+                        mention_parts.append(f'<a href="tg://user?id={u.telegram_id}">{u.telegram_id}</a>')
+                    pending_telegram_ids.append(u.telegram_id)
+
+                mention_text = " ".join(mention_parts)
+
+                # Send prompt to group
+                message_id = await bot_service.post_screenshot_request(
+                    group_chat_id=group.telegram_chat_id,
+                    mention_text=mention_text,
+                )
+
+                # Store collection state in Redis
+                r = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+                try:
+                    redis_key = f"screengate:collection:{group.telegram_chat_id}"
+                    state = {
+                        "pending_users": pending_telegram_ids,
+                        "message_id": message_id,
+                        "started_at": datetime.now(tz.utc).isoformat(),
+                    }
+                    await r.setex(redis_key, timeout_seconds, json.dumps(state))
+                finally:
+                    await r.aclose()
+
+                # Schedule timeout task
+                close_screenshot_collection.apply_async(
+                    args=[group.telegram_chat_id],
+                    countdown=timeout_seconds,
+                )
+
+                logger.info(
+                    "send_daily_checkins: sent screenshot request to group %s "
+                    "for %d users, timeout=%ds",
+                    group.telegram_chat_id,
+                    len(pending),
+                    timeout_seconds,
+                )
+
+    _run(_inner())
+
+
+@celery_app.task(name="app.workers.tasks.close_screenshot_collection")
+def close_screenshot_collection(group_telegram_chat_id: int) -> None:
+    """Send manual fallback buttons for users who didn't submit screenshots."""
+    async def _inner():
+        import redis.asyncio as aioredis
+
+        settings = get_settings()
+        r = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+
+        try:
+            redis_key = f"screengate:collection:{group_telegram_chat_id}"
+            raw = await r.get(redis_key)
+
+            if not raw:
+                logger.info(
+                    "close_screenshot_collection: no pending collection for %s",
+                    group_telegram_chat_id,
+                )
+                return
+
+            state = json.loads(raw)
+            pending_users = state.get("pending_users", [])
+
+            if not pending_users:
+                await r.delete(redis_key)
+                return
+
+            # Look up usernames for each pending user
+            async with AsyncSessionLocal() as db:
+                for telegram_id in pending_users:
+                    user_result = await db.execute(
+                        select(User).where(User.telegram_id == telegram_id)
+                    )
+                    user = user_result.scalar_one_or_none()
+                    username = user.username if user and user.username else str(telegram_id)
+
+                    await bot_service.post_manual_fallback(
+                        group_chat_id=group_telegram_chat_id,
+                        user_telegram_id=telegram_id,
+                        username=username,
+                    )
+
+                    logger.info(
+                        "close_screenshot_collection: sent fallback for user %s in group %s",
+                        telegram_id,
+                        group_telegram_chat_id,
+                    )
+
+            # Clean up Redis
+            await r.delete(redis_key)
+
+        finally:
+            await r.aclose()
 
     _run(_inner())
 

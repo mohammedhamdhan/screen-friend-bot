@@ -8,11 +8,14 @@ server startup — see app.main._background_init.
 
 import logging
 
+from telegram import BotCommand, BotCommandScopeAllGroupChats, BotCommandScopeAllPrivateChats
 from telegram.ext import (
     Application,
     ApplicationBuilder,
     CallbackQueryHandler,
     CommandHandler,
+    MessageHandler,
+    filters,
 )
 
 from app.config import get_settings
@@ -47,16 +50,20 @@ def create_application() -> Application:
 
     # Setup handlers
     from bot.handlers.setup import (
+        build_removelimit_handler,
+        build_setcheckintime_handler,
+        build_setlimit_handler,
         link_command,
         limits_command,
-        setlimit_command,
         start_command,
     )
 
     application.add_handler(CommandHandler("start", start_command))
-    application.add_handler(CommandHandler("setlimit", setlimit_command))
+    application.add_handler(build_setlimit_handler())
+    application.add_handler(build_removelimit_handler())
     application.add_handler(CommandHandler("limits", limits_command))
     application.add_handler(CommandHandler("link", link_command))
+    application.add_handler(build_setcheckintime_handler())
 
     # Request conversation handler (/more flow)
     from bot.handlers.requests import build_conversation_handler
@@ -65,14 +72,14 @@ def create_application() -> Application:
 
     # Social handlers
     from bot.handlers.social import (
+        build_confess_handler,
         checkin_command,
-        confess_command,
         history_command,
         streak_command,
     )
 
     application.add_handler(CommandHandler("checkin", checkin_command))
-    application.add_handler(CommandHandler("confess", confess_command))
+    application.add_handler(build_confess_handler())
     application.add_handler(CommandHandler("streak", streak_command))
     application.add_handler(CommandHandler("history", history_command))
 
@@ -92,7 +99,26 @@ def create_application() -> Application:
     application.add_handler(CommandHandler("members", members_command))
     application.add_handler(CommandHandler("kick", kick_command))
 
-    # Catch-all callback query handler (vote, checkin, react prefixes)
+    # Group photo handler for screenshot OCR check-in
+    # Must be AFTER ConversationHandler so /more photo flow isn't intercepted
+    from bot.handlers.screen_time import handle_dm_screenshot, handle_group_screenshot
+
+    application.add_handler(
+        MessageHandler(
+            filters.PHOTO & (filters.ChatType.GROUP | filters.ChatType.SUPERGROUP),
+            handle_group_screenshot,
+        )
+    )
+
+    # DM photo handler for personal /checkin screenshot flow
+    application.add_handler(
+        MessageHandler(
+            filters.PHOTO & filters.ChatType.PRIVATE,
+            handle_dm_screenshot,
+        )
+    )
+
+    # Catch-all callback query handler (vote, checkin, screencheckin, react prefixes)
     # Must be registered AFTER the ConversationHandler so that duration:
     # callbacks are consumed by the conversation first.
     from bot.handlers.callbacks import callback_handler
@@ -112,6 +138,46 @@ async def initialize_application(application: Application) -> None:
 
     await application.initialize()
     logger.info("initialize_application: bot initialised")
+
+    # Register scoped command menus
+    # Private chat commands (no @botname suffix shown)
+    private_commands = [
+        BotCommand("start", "Register and get started"),
+        BotCommand("setlimit", "Set a daily app limit"),
+        BotCommand("removelimit", "Remove an app limit"),
+        BotCommand("limits", "View your app limits"),
+        BotCommand("checkin", "Log your daily check-in"),
+        BotCommand("more", "Request extra screen time"),
+        BotCommand("streak", "View your current streak"),
+        BotCommand("history", "View your check-in history"),
+    ]
+    await application.bot.set_my_commands(
+        private_commands, scope=BotCommandScopeAllPrivateChats()
+    )
+
+    # Group chat commands
+    group_commands = [
+        BotCommand("start", "Register and get started"),
+        BotCommand("link", "Link this group"),
+        BotCommand("setlimit", "Set a daily app limit"),
+        BotCommand("removelimit", "Remove an app limit"),
+        BotCommand("limits", "View your app limits"),
+        BotCommand("setcheckintime", "Set check-in hour (UTC)"),
+        BotCommand("more", "Request extra screen time"),
+        BotCommand("checkin", "Log your daily check-in"),
+        BotCommand("leaderboard", "View group leaderboard"),
+        BotCommand("streak", "View your current streak"),
+        BotCommand("setup", "Group settings (admins)"),
+        BotCommand("members", "List members (admins)"),
+    ]
+    await application.bot.set_my_commands(
+        group_commands, scope=BotCommandScopeAllGroupChats()
+    )
+
+    # Default fallback (shown if no scope matches)
+    await application.bot.set_my_commands(private_commands)
+    logger.info("initialize_application: command menus set (private=%d, group=%d)",
+                len(private_commands), len(group_commands))
 
     if settings.WEBHOOK_URL:
         await application.bot.set_webhook(

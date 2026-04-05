@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models import Group, Membership, User
-from app.schemas.group import GroupCreateRequest, GroupResponse, MembershipCreateRequest
+from app.schemas.group import GroupCreateRequest, GroupResponse, GroupUpdateRequest, MembershipCreateRequest
 
 router = APIRouter(prefix="/groups", tags=["groups"])
 
@@ -18,6 +18,32 @@ async def upsert_group(payload: GroupCreateRequest, db: AsyncSession = Depends(g
     else:
         group = Group(telegram_chat_id=payload.telegram_chat_id, name=payload.name)
         db.add(group)
+    await db.commit()
+    await db.refresh(group)
+    return group
+
+
+@router.get("/{chat_id}", response_model=GroupResponse)
+async def get_group(chat_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Group).where(Group.telegram_chat_id == chat_id))
+    group = result.scalar_one_or_none()
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found")
+    return group
+
+
+@router.patch("/{chat_id}", response_model=GroupResponse)
+async def update_group(chat_id: int, payload: GroupUpdateRequest, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Group).where(Group.telegram_chat_id == chat_id))
+    group = result.scalar_one_or_none()
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found")
+    if payload.vote_threshold is not None:
+        group.vote_threshold = payload.vote_threshold
+    if payload.checkin_time_utc is not None:
+        group.checkin_time_utc = payload.checkin_time_utc
+    if payload.checkin_minute_utc is not None:
+        group.checkin_minute_utc = payload.checkin_minute_utc
     await db.commit()
     await db.refresh(group)
     return group

@@ -1,13 +1,22 @@
 """
 Social handlers: /checkin, /confess, /streak, /history
+
+/confess supports both inline args and conversational flow.
 """
 
+import json
 import logging
 import os
 
 import httpx
 from telegram import Update
-from telegram.ext import ContextTypes
+from telegram.ext import (
+    CommandHandler,
+    ContextTypes,
+    ConversationHandler,
+    MessageHandler,
+    filters,
+)
 
 from bot.keyboards import checkin_keyboard
 
@@ -15,38 +24,104 @@ logger = logging.getLogger(__name__)
 
 _BASE_URL = f"http://127.0.0.1:{os.environ.get('PORT', '8000')}"
 
+_CHECKIN_TTL_SECONDS = 600  # 10 minutes to send a screenshot
+
+
+async def _get_redis():
+    """Get an async Redis client."""
+    import redis.asyncio as aioredis
+    from app.config import get_settings
+
+    settings = get_settings()
+    return aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+
 
 async def checkin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/checkin — prompt user to log their daily check-in."""
+    """/checkin — prompt user to send a screenshot for daily check-in."""
     user = update.effective_user
     if user is None:
         return
 
+    chat = update.effective_chat
+    if chat is None:
+        return
+
     name = user.first_name or user.username or "you"
+
+    # Store check-in state in Redis so the photo handler picks it up
+    r = await _get_redis()
+    try:
+        redis_key = f"screengate:checkin:{user.id}"
+        state = {
+            "chat_id": chat.id,
+            "retries": 0,
+        }
+        await r.setex(redis_key, _CHECKIN_TTL_SECONDS, json.dumps(state))
+    finally:
+        await r.aclose()
+
     await update.message.reply_text(
-        f"📅 Hey {name}, how did today go?",
-        reply_markup=checkin_keyboard(user_id=user.id),
+        f"📸 Hey {name}, please send a screenshot of your screen time report "
+        f"and I'll check it against your limits!",
     )
 
 
-async def confess_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/confess <app> [note] — confess you used an app without a vote."""
+# ConversationHandler states for /confess
+CONFESS_APP, CONFESS_NOTE = range(100, 102)
+
+_CONFESS_APP_KEY = "confess_app"
+
+
+async def confess_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """/confess [app] [note] — confess you used an app without a vote."""
     user = update.effective_user
     chat = update.effective_chat
     if user is None or chat is None:
-        return
+        return ConversationHandler.END
 
     args = context.args or []
+
     if not args:
-        await update.message.reply_text(
-            "Usage: /confess <app_name> [optional note]\n"
-            "Example: /confess Instagram I just couldn't help it"
-        )
-        return
+        await update.message.reply_text("Which app did you use without permission?")
+        return CONFESS_APP
 
     app_name = args[0]
     note = " ".join(args[1:]) if len(args) > 1 else None
+    await _submit_confession(update, user, chat, app_name, note)
+    return ConversationHandler.END
 
+
+async def _confess_got_app(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """User replied with the app name."""
+    app_name = update.message.text.strip()
+    if not app_name:
+        await update.message.reply_text("Please enter an app name.")
+        return CONFESS_APP
+
+    context.user_data[_CONFESS_APP_KEY] = app_name
+    await update.message.reply_text(
+        "Any note you want to add? (or type 'skip' to skip)"
+    )
+    return CONFESS_NOTE
+
+
+async def _confess_got_note(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """User replied with a note or skip."""
+    user = update.effective_user
+    chat = update.effective_chat
+    if user is None or chat is None:
+        return ConversationHandler.END
+
+    app_name = context.user_data.pop(_CONFESS_APP_KEY, "unknown")
+    text = update.message.text.strip()
+    note = None if text.lower() == "skip" else text
+
+    await _submit_confession(update, user, chat, app_name, note)
+    return ConversationHandler.END
+
+
+async def _submit_confession(update, user, chat, app_name, note):
+    """Submit the confession to the API and post to group."""
     payload = {
         "telegram_id": user.id,
         "stayed_clean": False,
@@ -63,9 +138,8 @@ async def confess_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 return
             resp.raise_for_status()
     except Exception as exc:
-        logger.error("confess_command: error logging checkin: %s", exc)
+        logger.error("confess: error logging checkin: %s", exc)
 
-    # Post confession to group if in a group chat
     if chat.type in ("group", "supergroup"):
         username = user.username or user.first_name or str(user.id)
         lines = ["🙏 *Confession*", "", f"👤 @{username} used *{app_name}* without a vote."]
@@ -77,13 +151,37 @@ async def confess_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 "\n".join(lines), parse_mode="Markdown"
             )
         except Exception as exc:
-            logger.error("confess_command: failed to post confession: %s", exc)
+            logger.error("confess: failed to post confession: %s", exc)
     else:
         await update.message.reply_text(
             f"Confession logged for *{app_name}*. "
             "Use this command in your group to share with your accountability partners.",
             parse_mode="Markdown",
         )
+
+
+async def _confess_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data.pop(_CONFESS_APP_KEY, None)
+    await update.message.reply_text("Cancelled.")
+    return ConversationHandler.END
+
+
+def build_confess_handler() -> ConversationHandler:
+    """ConversationHandler for /confess."""
+    return ConversationHandler(
+        entry_points=[CommandHandler("confess", confess_command)],
+        states={
+            CONFESS_APP: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, _confess_got_app),
+            ],
+            CONFESS_NOTE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, _confess_got_note),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", _confess_cancel)],
+        per_user=True,
+        per_chat=True,
+    )
 
 
 async def streak_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

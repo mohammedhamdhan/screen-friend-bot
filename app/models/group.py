@@ -17,6 +17,7 @@ class Group(Base):
     name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     vote_threshold: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     checkin_time_utc: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    checkin_minute_utc: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

@@ -188,6 +188,9 @@ async def handle_group_screenshot(
             )
             return
 
+        # Apply any approved bonus minutes for today
+        user_limits = await _apply_daily_bonuses(user.id, user_limits)
+
         # Compare against limits (all apps now present)
         stayed_clean, violations = compare_against_limits(extracted_apps, user_limits)
 
@@ -549,6 +552,9 @@ async def _handle_personal_checkin(
     # All apps accounted for — clean up Redis state
     await r.delete(checkin_key)
 
+    # Apply any approved bonus minutes for today
+    user_limits = await _apply_daily_bonuses(user.id, user_limits)
+
     # Compare against limits (all apps now present)
     stayed_clean, violations = compare_against_limits(extracted_apps, user_limits)
 
@@ -619,6 +625,34 @@ async def _handle_personal_checkin(
             f"❌ @{username} slipped: {violation_text}\n"
             f"Streak reset to 0.",
         )
+
+
+async def _apply_daily_bonuses(
+    telegram_id: int, user_limits: list[dict]
+) -> list[dict]:
+    """Add any approved bonus minutes from Redis to the user's limits for today."""
+    if not user_limits:
+        return user_limits
+
+    r = await _get_redis()
+    try:
+        updated = []
+        for limit in user_limits:
+            app_name = limit["app_name"]
+            key = f"screengate:bonus:{telegram_id}:{app_name.lower()}"
+            raw = await r.get(key)
+            if raw:
+                data = json.loads(raw)
+                bonus = data.get("bonus_minutes", 0)
+                updated.append({
+                    "app_name": app_name,
+                    "daily_limit_mins": limit["daily_limit_mins"] + bonus,
+                })
+            else:
+                updated.append(limit)
+        return updated
+    finally:
+        await r.aclose()
 
 
 def _merge_app_lists(

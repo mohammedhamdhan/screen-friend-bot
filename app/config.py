@@ -28,12 +28,20 @@ class Settings(BaseSettings):
     # OpenAI (GPT-4o vision for screen time OCR)
     OPENAI_API_KEY: str = ""
 
+    # Timezone for user-facing display (IANA name)
+    DISPLAY_TIMEZONE: str = "Asia/Singapore"
+
     # App behaviour
     REQUEST_TIMEOUT_MINUTES: int = 30
     REQUEST_COOLDOWN_MINUTES: int = 15
     CHECKIN_TIME_UTC: int = 13
     LEADERBOARD_DAY: int = 0
     SCREENSHOT_COLLECTION_TIMEOUT_MINUTES: int = 60
+
+    # Weekly check-in
+    WEEKLY_CHECKIN_TIME_UTC: int = 10
+    WEEKLY_COLLECTION_TIMEOUT_MINUTES: int = 120
+    WEEKLY_TOLERANCE_MINUTES: int = 15
 
 
 @lru_cache

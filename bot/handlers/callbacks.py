@@ -34,6 +34,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     if data.startswith("vote:"):
         await _handle_vote(query, update, context)
+    elif data.startswith("weeklyscreencheckin:"):
+        await _handle_weekly_screencheckin(query, update, context)
     elif data.startswith("screencheckin:"):
         await _handle_screencheckin(query, update, context)
     elif data.startswith("checkin:"):
@@ -277,6 +279,97 @@ async def _remove_from_collection(chat, user_id: int) -> None:
             await r.aclose()
     except Exception as exc:
         logger.warning("_remove_from_collection: %s", exc)
+
+
+# ---------------------------------------------------------------------------
+# Weekly screen check-in (manual fallback)
+# ---------------------------------------------------------------------------
+
+async def _handle_weekly_screencheckin(
+    query, update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Handle weeklyscreencheckin:{user_id}:submitted|skipped — weekly manual fallback."""
+    user = update.effective_user
+    if user is None:
+        await query.answer()
+        return
+
+    parts = (query.data or "").split(":")
+    if len(parts) != 3:
+        await query.answer("Invalid check-in data.", show_alert=True)
+        return
+
+    _, target_user_id_str, action = parts
+    try:
+        target_user_id = int(target_user_id_str)
+    except ValueError:
+        await query.answer("Invalid check-in data.", show_alert=True)
+        return
+
+    if target_user_id != user.id:
+        await query.answer("This check-in is not for you.", show_alert=True)
+        return
+
+    if action == "submitted":
+        await query.answer(
+            "✅ Noted! Your weekly check-in will be reviewed during collation.",
+            show_alert=True,
+        )
+        if query.message:
+            await query.message.reply_text(
+                f"✅ <b>{update.effective_user.first_name}</b> confirmed weekly submission.",
+                parse_mode="HTML",
+            )
+    elif action == "skipped":
+        await query.answer(
+            "⏭️ Weekly check-in skipped. Try to submit next week!",
+            show_alert=True,
+        )
+        if query.message:
+            await query.message.reply_text(
+                f"⏭️ <b>{update.effective_user.first_name}</b> skipped weekly check-in.",
+                parse_mode="HTML",
+            )
+    else:
+        await query.answer("Unknown action.", show_alert=True)
+        return
+
+    # Remove from weekly Redis collection
+    await _remove_from_weekly_collection(update.effective_chat, user.id)
+
+
+async def _remove_from_weekly_collection(chat, user_id: int) -> None:
+    """Remove user from Redis weekly screenshot collection pending list."""
+    if chat is None:
+        return
+    try:
+        import json
+        import redis.asyncio as aioredis
+        from app.config import get_settings
+
+        settings = get_settings()
+        r = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+        try:
+            redis_key = f"screengate:weekly_collection:{chat.id}"
+            raw = await r.get(redis_key)
+            if raw:
+                state = json.loads(raw)
+                pending = state.get("pending_users", [])
+                if user_id in pending:
+                    pending.remove(user_id)
+                    state["pending_users"] = pending
+                    if pending:
+                        ttl = await r.ttl(redis_key)
+                        if ttl > 0:
+                            await r.setex(redis_key, ttl, json.dumps(state))
+                        else:
+                            await r.set(redis_key, json.dumps(state))
+                    else:
+                        await r.delete(redis_key)
+        finally:
+            await r.aclose()
+    except Exception as exc:
+        logger.warning("_remove_from_weekly_collection: %s", exc)
 
 
 # ---------------------------------------------------------------------------

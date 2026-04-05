@@ -365,6 +365,135 @@ async def post_manual_fallback(
         )
 
 
+async def post_weekly_screenshot_request(
+    group_chat_id: int | str, mention_text: str
+) -> Optional[int]:
+    """Send a weekly screenshot collection prompt to the group.
+
+    Returns the Telegram message_id of the sent message, or None on failure.
+    """
+    text = (
+        "📸 <b>Weekly Screen Time Check-in</b>\n\n"
+        f"{mention_text}\n\n"
+        "Please send a screenshot of your <b>WEEKLY</b> screen time report. "
+        "I'll compare it against your daily check-ins to make sure everything lines up!\n\n"
+        "⏳ You have 2 hours to submit."
+    )
+
+    payload = {
+        "chat_id": group_chat_id,
+        "text": text,
+        "parse_mode": "HTML",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(f"{_base_url()}/sendMessage", json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+            message_id: int = data["result"]["message_id"]
+            logger.info(
+                "post_weekly_screenshot_request: sent to chat_id=%s, message_id=%s",
+                group_chat_id,
+                message_id,
+            )
+            return message_id
+    except Exception as exc:
+        logger.error(
+            "post_weekly_screenshot_request failed for chat_id=%s: %s",
+            group_chat_id,
+            exc,
+        )
+        return None
+
+
+async def post_weekly_collation_result(
+    group_chat_id: int | str,
+    username: str,
+    passed: bool,
+    discrepancy_minutes: int,
+) -> None:
+    """Post the weekly collation result to the group."""
+    if passed:
+        text = (
+            f"✅ @{username} — weekly check-in passed! "
+            "Your weekly totals match your daily check-ins. Keep it up! 🎉"
+        )
+    else:
+        text = (
+            f"⚠️ @{username} — weekly check-in found a discrepancy of "
+            f"<b>{discrepancy_minutes} extra minutes</b> beyond your daily check-ins.\n\n"
+            "It looks like some screen time happened after your daily check-ins. "
+            "Your streak has been reset — but nobody succeeds at first! "
+            "Try setting smaller goals and building up, or consider changing your check-in time "
+            "to later in the day. You've got this! 💪"
+        )
+
+    payload = {
+        "chat_id": group_chat_id,
+        "text": text,
+        "parse_mode": "HTML",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(f"{_base_url()}/sendMessage", json=payload)
+            resp.raise_for_status()
+            logger.info("post_weekly_collation_result: sent for username=%s", username)
+    except Exception as exc:
+        logger.error(
+            "post_weekly_collation_result failed for username=%s: %s", username, exc
+        )
+
+
+async def post_weekly_manual_fallback(
+    group_chat_id: int | str,
+    user_telegram_id: int,
+    username: str,
+) -> None:
+    """Send weekly manual check-in buttons for a user who didn't submit a weekly screenshot."""
+    text = (
+        f"⏰ @{username}, time's up! "
+        "You didn't send a weekly screenshot. Please check in manually:"
+    )
+
+    inline_keyboard = {
+        "inline_keyboard": [
+            [
+                {
+                    "text": "✅ Submitted",
+                    "callback_data": f"weeklyscreencheckin:{user_telegram_id}:submitted",
+                },
+                {
+                    "text": "⏭️ Skip",
+                    "callback_data": f"weeklyscreencheckin:{user_telegram_id}:skipped",
+                },
+            ]
+        ]
+    }
+
+    payload = {
+        "chat_id": group_chat_id,
+        "text": text,
+        "reply_markup": inline_keyboard,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(f"{_base_url()}/sendMessage", json=payload)
+            resp.raise_for_status()
+            logger.info(
+                "post_weekly_manual_fallback: sent for telegram_id=%s",
+                user_telegram_id,
+            )
+    except Exception as exc:
+        logger.error(
+            "post_weekly_manual_fallback failed for telegram_id=%s: %s",
+            user_telegram_id,
+            exc,
+        )
+
+
 async def post_leaderboard(group_chat_id: int | str, message: str) -> None:
     """Post a pre-formatted leaderboard message to the group.
 

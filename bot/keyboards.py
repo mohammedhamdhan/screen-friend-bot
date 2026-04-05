@@ -47,6 +47,24 @@ def screenshot_fallback_keyboard(user_id: int) -> InlineKeyboardMarkup:
     )
 
 
+def weekly_screenshot_fallback_keyboard(user_id: int) -> InlineKeyboardMarkup:
+    """Inline keyboard for weekly manual check-in when OCR fails or times out."""
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "✅ Submitted",
+                    callback_data=f"weeklyscreencheckin:{user_id}:submitted",
+                ),
+                InlineKeyboardButton(
+                    "⏭️ Skip",
+                    callback_data=f"weeklyscreencheckin:{user_id}:skipped",
+                ),
+            ]
+        ]
+    )
+
+
 def checkin_keyboard(user_id: int | None = None) -> InlineKeyboardMarkup:
     """Inline keyboard for daily check-in (clean / slipped)."""
     if user_id is not None:

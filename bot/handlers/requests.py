@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 _BASE_URL = f"http://127.0.0.1:{os.environ.get('PORT', '8000')}"
 
 # ConversationHandler states
-CHOOSING_DURATION, WAITING_FOR_PHOTO = range(2)
+CHOOSING_APP, CHOOSING_DURATION, WAITING_FOR_PHOTO = range(3)
 
 # Context user_data keys
 _KEY_APP = "more_app"
@@ -42,9 +42,10 @@ async def more_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     args = context.args or []
     if not args:
         await update.message.reply_text(
-            "Usage: /more <app_name> [minutes]\nExample: /more Instagram 30"
+            "Which app do you want extra time for?\n"
+            "(e.g. Instagram, YouTube, TikTok)"
         )
-        return ConversationHandler.END
+        return CHOOSING_APP
 
     app_name = args[0]
     context.user_data[_KEY_APP] = app_name
@@ -74,6 +75,29 @@ async def more_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
             reply_markup=duration_keyboard(),
         )
         return CHOOSING_DURATION
+
+
+async def app_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle app name typed by user."""
+    user = update.effective_user
+    chat = update.effective_chat
+    if user is None or chat is None:
+        return ConversationHandler.END
+
+    app_name = update.message.text.strip()
+    if not app_name:
+        await update.message.reply_text("Please enter an app name.")
+        return CHOOSING_APP
+
+    context.user_data[_KEY_APP] = app_name
+    context.user_data[_KEY_GROUP_CHAT_ID] = chat.id
+
+    await update.message.reply_text(
+        f"How many extra minutes do you want for *{app_name}*?",
+        parse_mode="Markdown",
+        reply_markup=duration_keyboard(),
+    )
+    return CHOOSING_DURATION
 
 
 async def duration_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -213,6 +237,9 @@ def build_conversation_handler() -> ConversationHandler:
     return ConversationHandler(
         entry_points=[CommandHandler("more", more_command)],
         states={
+            CHOOSING_APP: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, app_chosen),
+            ],
             CHOOSING_DURATION: [
                 CallbackQueryHandler(duration_chosen, pattern=r"^duration:\d+$")
             ],
@@ -223,4 +250,5 @@ def build_conversation_handler() -> ConversationHandler:
         fallbacks=[CommandHandler("cancel", cancel_command)],
         per_user=True,
         per_chat=True,
+        per_message=False,
     )

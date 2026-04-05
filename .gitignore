@@ -74,6 +74,7 @@ logs/
 
 # Celery
 celerybeat-schedule
+celerybeat-schedule.db
 celerybeat.pid
 
 # Secrets / keys

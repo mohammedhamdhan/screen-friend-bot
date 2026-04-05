@@ -96,17 +96,18 @@ async def delete_limit(telegram_id: int, app_name: str, db: AsyncSession = Depen
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Case-insensitive lookup
+    # Case-insensitive lookup — delete all matching (handles duplicates)
     result = await db.execute(
         select(AppLimit).where(
             AppLimit.user_id == user.id,
             func.lower(AppLimit.app_name) == app_name.lower(),
         )
     )
-    limit = result.scalar_one_or_none()
-    if limit is None:
+    limits = result.scalars().all()
+    if not limits:
         raise HTTPException(status_code=404, detail="Limit not found")
 
-    await db.delete(limit)
+    for limit in limits:
+        await db.delete(limit)
     await db.commit()
-    return {"detail": f"Limit for {limit.app_name} removed"}
+    return {"detail": f"Limit for {app_name} removed"}

@@ -7,6 +7,7 @@ All functions are fire-and-forget async helpers called by FastAPI routers.
 """
 
 import logging
+import uuid
 from typing import Optional
 
 import httpx
@@ -23,7 +24,7 @@ def _base_url() -> str:
 
 async def post_request_to_group(
     group_chat_id: int | str,
-    request_id: int,
+    request_id: uuid.UUID | str | int,
     photo_url: str,
     requester_username: str,
     app_name: str,
@@ -105,7 +106,7 @@ async def post_request_to_group(
 
 async def post_resolution(
     group_chat_id: int | str,
-    request_id: int,
+    request_id: uuid.UUID | str | int,
     status: str,
     message_id: Optional[int] = None,
     requester_username: Optional[str] = None,
@@ -134,20 +135,21 @@ async def post_resolution(
     status_lower = status.lower()
     if status_lower == "approved":
         verdict_line = "✅ *Approved* — screen time granted!"
-    elif status_lower == "rejected":
-        verdict_line = "❌ *Rejected* — request denied."
+    elif status_lower == "denied":
+        verdict_line = "❌ *Denied* — request denied."
     else:
         verdict_line = f"ℹ️ *{status.capitalize()}*"
 
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             if message_id:
-                # Edit the caption of the original photo message
+                # Edit the caption and remove vote buttons
                 payload = {
                     "chat_id": group_chat_id,
                     "message_id": message_id,
                     "caption": verdict_line,
                     "parse_mode": "Markdown",
+                    "reply_markup": {"inline_keyboard": []},
                 }
                 resp = await client.post(
                     f"{_base_url()}/editMessageCaption", json=payload

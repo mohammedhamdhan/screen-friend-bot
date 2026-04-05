@@ -3,7 +3,7 @@ builder = "dockerfile"
 dockerfilePath = "Dockerfile"
 
 [deploy]
-startCommand = "sh -c 'alembic upgrade head && celery -A app.workers.celery_app worker --beat --loglevel=info --schedule=/tmp/celerybeat-schedule & uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}'"
+startCommand = "sh -c 'alembic upgrade head && celery -A app.workers.celery_app worker --beat --loglevel=info --concurrency=2 --pool=solo --schedule=/tmp/celerybeat-schedule & uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}'"
 healthcheckPath = "/health"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 5

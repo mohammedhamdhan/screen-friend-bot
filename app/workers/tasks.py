@@ -114,8 +114,8 @@ def expire_request(self, request_id: str) -> None:
 # Task: send daily check-in reminders
 # ---------------------------------------------------------------------------
 
-@celery_app.task(name="app.workers.tasks.send_daily_checkins")
-def send_daily_checkins() -> None:
+@celery_app.task(name="app.workers.tasks.send_daily_checkins", bind=True, max_retries=3)
+def send_daily_checkins(self) -> None:
     """Send screenshot collection prompts to each group for unchecked-in members.
 
     For each group, posts a message asking pending users to send screen time
@@ -202,7 +202,11 @@ def send_daily_checkins() -> None:
                     timeout_seconds,
                 )
 
-    _run(_inner())
+    try:
+        _run(_inner())
+    except Exception as exc:
+        logger.error("send_daily_checkins failed: %s", exc)
+        raise self.retry(exc=exc, countdown=60)
 
 
 @celery_app.task(name="app.workers.tasks.close_screenshot_collection")
@@ -266,8 +270,8 @@ def close_screenshot_collection(group_telegram_chat_id: int) -> None:
 # Task: send weekly leaderboard
 # ---------------------------------------------------------------------------
 
-@celery_app.task(name="app.workers.tasks.send_weekly_leaderboard")
-def send_weekly_leaderboard() -> None:
+@celery_app.task(name="app.workers.tasks.send_weekly_leaderboard", bind=True, max_retries=3)
+def send_weekly_leaderboard(self) -> None:
     """Fetch and post the weekly leaderboard for every group."""
 
     async def _inner():
@@ -302,4 +306,8 @@ def send_weekly_leaderboard() -> None:
                         exc,
                     )
 
-    _run(_inner())
+    try:
+        _run(_inner())
+    except Exception as exc:
+        logger.error("send_weekly_leaderboard failed: %s", exc)
+        raise self.retry(exc=exc, countdown=60)

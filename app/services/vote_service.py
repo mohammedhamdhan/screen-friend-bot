@@ -5,12 +5,16 @@ Checks current vote counts against a group's threshold and resolves
 a pending request as approved or denied when enough votes exist.
 """
 
+import json
 import logging
 import uuid
+from datetime import datetime, timezone, timedelta
 
+import redis.asyncio as aioredis
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.models import Group, Membership, Request, RequestStatus, User, Vote
 from app.services import bot_service
 from app.services import leaderboard_service
@@ -131,6 +135,12 @@ async def check_and_resolve(request_id: uuid.UUID, db: AsyncSession) -> None:
         app_name=request.app_name,
     )
 
+    # If approved, store temporary bonus minutes in Redis (expires end of day UTC)
+    if new_status == RequestStatus.approved and requester is not None:
+        await _store_daily_bonus(
+            requester.telegram_id, request.app_name, request.minutes_requested
+        )
+
     # Update leaderboard — requests_made always incremented
     await leaderboard_service.upsert_leaderboard(
         user_id=request.user_id,
@@ -146,3 +156,39 @@ async def check_and_resolve(request_id: uuid.UUID, db: AsyncSession) -> None:
             field="requests_denied",
             db=db,
         )
+
+
+async def _store_daily_bonus(
+    telegram_id: int, app_name: str, bonus_minutes: int
+) -> None:
+    """Store approved bonus minutes in Redis, expiring at end of day UTC.
+
+    Key format: screengate:bonus:{telegram_id}:{app_name_lower}
+    Value: JSON with bonus_minutes (accumulates if multiple requests approved).
+    """
+    settings = get_settings()
+    r = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+    try:
+        key = f"screengate:bonus:{telegram_id}:{app_name.lower()}"
+
+        # Accumulate if there's already a bonus for this app today
+        existing = await r.get(key)
+        if existing:
+            data = json.loads(existing)
+            bonus_minutes += data.get("bonus_minutes", 0)
+
+        # TTL = seconds until end of day UTC
+        now = datetime.now(tz=timezone.utc)
+        end_of_day = datetime.combine(
+            now.date() + timedelta(days=1),
+            datetime.min.time(),
+        ).replace(tzinfo=timezone.utc)
+        ttl = int((end_of_day - now).total_seconds())
+
+        await r.setex(key, ttl, json.dumps({"bonus_minutes": bonus_minutes}))
+        logger.info(
+            "_store_daily_bonus: telegram_id=%s app=%s bonus=%d ttl=%ds",
+            telegram_id, app_name, bonus_minutes, ttl,
+        )
+    finally:
+        await r.aclose()

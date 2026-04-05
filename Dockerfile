@@ -20,5 +20,8 @@ COPY app ./app
 COPY bot ./bot
 COPY alembic ./alembic
 COPY alembic.ini .
+COPY start-api.sh .
+COPY start-worker.sh .
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Default: run the API (Railway overrides this per service)
+CMD ["./start-api.sh"]
